@@ -102,13 +102,23 @@ substUnder x m y n
 
 subst :: String -> Expr -> Expr -> Expr
 subst _ _ (Const i) = Const i
-subst x m (Plus n1 n2) = Plus (subst x m n1) (subst x m n2)
-subst x m (Var y) 
+subst x m (Var y)
   | x == y = m
   | otherwise = Var y
-subst x m (Lam y n) = Lam y (substUnder x m y n)
-subst x m (App n1 n2) = App (subst x m n1) (subst x m n2)
-subst x m n = undefined
+subst x m (Plus a b) = Plus (subst x m a) (subst x m b)
+subst x m (Lam y e)
+  | x == y = Lam y e
+  | otherwise = Lam y (substUnder x m y e)
+subst x m (App a b) = App (subst x m a) (subst x m b)
+subst x m (Store e) = Store (subst x m e)
+subst _ _ Recall = Recall
+subst x m (Throw e) = Throw (subst x m e)
+subst x m (Catch a y b)
+  | x == y = Catch (subst x m a) y b
+  | otherwise = Catch (subst x m a) y (subst x m b)
+
+
+
 
 {-------------------------------------------------------------------------------
 
@@ -202,7 +212,38 @@ bubble; this won't *just* be `Throw` and `Catch.
 -------------------------------------------------------------------------------}
 
 smallStep :: (Expr, Expr) -> Maybe (Expr, Expr)
-smallStep = undefined
+smallStep (Const x, y) = Nothing
+smallStep (Var x, y) = Nothing
+smallStep (Plus x y, z)
+  | not (isValue x) = fmap (\(x', z') -> (Plus x' y, z')) (smallStep (x, z))
+  | not (isValue y) = fmap (\(y', z') -> (Plus x y', z')) (smallStep (y, z))
+  | isValue x && isValue y = case (x, y) of
+     (Const a, Const b) -> Just (Const (a + b), z)
+     _ -> Nothing
+smallStep (App (Lam e x) y, z)
+  | isValue y = Just (subst e y x, z)
+  | otherwise = fmap (\( y', z') -> (App (Lam e x) y', z')) (smallStep (y, z))
+smallStep (App x y, z)
+  | not (isValue y) = fmap (\(x', z') -> (App x' y, z')) (smallStep (x, z))
+smallStep (Store i, z)
+  | not (isValue i) = fmap (\(i', z') -> (Store i', z')) (smallStep (i, z))
+  | isValue i = Just (Const 0, i)
+smallStep (Recall, z) = Just (z ,z)
+smallStep (Throw i, z)
+  | not (isValue i) = fmap (\(i', z') -> (Throw i', z')) (smallStep (i, z))
+  | isValue i = Just (Throw i, z)
+smallStep (Catch x n y, z)
+  | not (isValue x) && not (isException x) = fmap (\(x', z') -> (Catch x' n y, z')) (smallStep (x, z))
+  | isValue x = Just (x, z)
+  | isException x = case x of
+    Throw w -> Just (subst n w y, z)
+    _ -> Nothing
+
+
+isException :: Expr -> Bool
+isException (Throw _) = True
+isException _ = False
+
 
 steps :: (Expr, Expr) -> [(Expr, Expr)]
 steps s = case smallStep s of
